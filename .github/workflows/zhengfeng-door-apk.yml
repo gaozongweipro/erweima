@@ -10,10 +10,19 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Unpack project
+      - name: Unpack and fix Android JSON compatibility
         run: |
           mkdir -p zhengfeng-build
           base64 -d .ci/zhengfeng-src.tar.gz.b64 | tar -xz -C zhengfeng-build
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path("zhengfeng-build/app/src/main/java/com/zhengfeng/door/DoorApi.java")
+          s = p.read_text()
+          before = 'String[] names = JSONObject.getNames(obj);\n        return names == null ? "(无)" : Arrays.toString(names);'
+          after = 'org.json.JSONArray names = obj.names();\n        return names == null ? "(无)" : names.toString();'
+          assert before in s, "expected compatibility patch location missing"
+          p.write_text(s.replace(before, after))
+          PY
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -22,9 +31,7 @@ jobs:
         run: |
           echo "ANDROID_HOME=/usr/local/lib/android/sdk" >> "$GITHUB_ENV"
           echo "ANDROID_SDK_ROOT=/usr/local/lib/android/sdk" >> "$GITHUB_ENV"
-          ls -lah /usr/local/lib/android/sdk/cmdline-tools/
           SDKMANAGER=$(find /usr/local/lib/android/sdk/cmdline-tools -type f -name sdkmanager | head -1)
-          echo "SDK manager: $SDKMANAGER"
           test -n "$SDKMANAGER"
           yes | "$SDKMANAGER" --licenses >/dev/null || true
           "$SDKMANAGER" 'platforms;android-35' 'build-tools;35.0.0'
@@ -33,7 +40,7 @@ jobs:
           gradle-version: '8.9'
       - name: Build APK
         working-directory: zhengfeng-build
-        run: gradle --no-daemon --stacktrace :app:assembleDebug
+        run: gradle --no-daemon :app:assembleDebug
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
